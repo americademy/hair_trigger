@@ -434,6 +434,19 @@ END;
       raise GenerationError, "where can only be used in conjunction with nowrap on postgres 9.0 and greater" if options[:nowrap] && prepared_where && db_version < 90000
       raise GenerationError, "of can only be used in conjunction with nowrap on postgres 9.1 and greater" if options[:nowrap] && options[:of] && db_version < 90100
 
+      temp_tables = ''
+
+      if options[:for_each] == 'STATEMENT' && options[:timing] == "AFTER"
+        raise GenerationError, "when using for_each :statement you can only define one event at a time" unless options[:events].count == 1
+        if options[:events].first == 'INSERT'
+          temp_tables = 'REFERENCING NEW TABLE AS new_records'
+        elsif options[:events].first == 'UPDATE'
+          temp_tables = 'REFERENCING OLD TABLE AS old_records NEW TABLE AS new_records'
+        elsif options[:events].first == 'DELETE'
+          temp_tables = 'REFERENCING OLD TABLE AS old_records'
+        end
+      end
+
       sql = ''
 
       if options[:nowrap]
@@ -472,7 +485,7 @@ $$ LANGUAGE plpgsql#{security ? " SECURITY #{security.to_s.upcase}" : ""};
 
       [sql, <<-SQL]
 CREATE TRIGGER #{prepared_name} #{options[:timing]} #{options[:events].join(" OR ")} #{of_clause}ON #{adapter.quote_table_name(options[:table])}
-FOR EACH #{options[:for_each]}#{prepared_where && db_version >= 90000 ? " WHEN (" + prepared_where + ')': ''} EXECUTE PROCEDURE #{trigger_action};
+#{temp_tables} FOR EACH #{options[:for_each]} #{prepared_where && db_version >= 90000 ? " WHEN (" + prepared_where + ')': ''} EXECUTE PROCEDURE #{trigger_action};
       SQL
     end
 
@@ -480,7 +493,7 @@ FOR EACH #{options[:for_each]}#{prepared_where && db_version >= 90000 ? " WHEN (
       security = options[:security] if options[:security] && options[:security] != :definer
       sql = <<-SQL
 CREATE #{security ? "DEFINER = #{security} " : ""}TRIGGER #{prepared_name} #{options[:timing]} #{options[:events].first} ON `#{options[:table]}`
-FOR EACH #{options[:for_each]}
+#{temp_tables} FOR EACH #{options[:for_each]} 
 BEGIN
       SQL
       (@triggers ? @triggers : [self]).each do |trigger|
